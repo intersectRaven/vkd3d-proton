@@ -1,5 +1,6 @@
 vkd3d_common_src = [
   'debug.c',
+  'renderdoc.c',
   'memory.c',
   'utf8.c',
   'profiling.c'

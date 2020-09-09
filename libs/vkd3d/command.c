@@ -21,6 +21,7 @@
 
 #include "vkd3d_private.h"
 #include "vkd3d_swapchain_factory.h"
+#include "vkd3d_renderdoc.h"
 
 static HRESULT d3d12_fence_signal(struct d3d12_fence *fence, uint64_t value);
 static void d3d12_command_queue_add_submission(struct d3d12_command_queue *queue,
@@ -2799,6 +2800,7 @@ static void d3d12_command_list_reset_state(struct d3d12_command_list *list,
     list->is_predicated = false;
     list->render_pass_suspended = false;
     list->need_host_barrier = false;
+    list->debug_capture = vkd3d_renderdoc_active() && vkd3d_renderdoc_should_capture_shader_hash(0);
 
     list->current_framebuffer = VK_NULL_HANDLE;
     list->current_pipeline = VK_NULL_HANDLE;
@@ -4736,6 +4738,36 @@ static void STDMETHODCALLTYPE d3d12_command_list_OMSetStencilRef(d3d12_command_l
     dyn_state->dirty_flags |= VKD3D_DYNAMIC_STATE_STENCIL_REFERENCE;
 }
 
+static void d3d12_command_list_check_renderdoc_capture(struct d3d12_command_list *list,
+        struct d3d12_pipeline_state *state)
+{
+    unsigned int i;
+
+    if (vkd3d_renderdoc_active() && state)
+    {
+        if (state->vk_bind_point == VK_PIPELINE_BIND_POINT_COMPUTE)
+        {
+            if (vkd3d_renderdoc_should_capture_shader_hash(state->compute.meta.hash))
+            {
+                WARN("Triggering RenderDoc capture for this command list.\n");
+                list->debug_capture = true;
+            }
+        }
+        else if (state->vk_bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
+        {
+            for (i = 0; i < state->graphics.stage_count; i++)
+            {
+                if (vkd3d_renderdoc_should_capture_shader_hash(state->graphics.stage_meta[i].hash))
+                {
+                    WARN("Triggering RenderDoc capture for this command list.\n");
+                    list->debug_capture = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 static void STDMETHODCALLTYPE d3d12_command_list_SetPipelineState(d3d12_command_list_iface *iface,
         ID3D12PipelineState *pipeline_state)
 {
@@ -4764,6 +4796,8 @@ static void STDMETHODCALLTYPE d3d12_command_list_SetPipelineState(d3d12_command_
             }
         }
     }
+
+    d3d12_command_list_check_renderdoc_capture(list, state);
 
     if (list->state == state)
         return;
@@ -7310,6 +7344,8 @@ static void STDMETHODCALLTYPE d3d12_command_queue_ExecuteCommandLists(ID3D12Comm
         return;
     }
 
+    sub.execute.debug_capture = false;
+
     for (i = 0; i < command_list_count; ++i)
     {
         cmd_list = unsafe_impl_from_ID3D12CommandList(command_lists[i]);
@@ -7326,6 +7362,8 @@ static void STDMETHODCALLTYPE d3d12_command_queue_ExecuteCommandLists(ID3D12Comm
         InterlockedIncrement(outstanding[i]);
 
         buffers[i] = cmd_list->vk_command_buffer;
+        if (cmd_list->debug_capture)
+            sub.execute.debug_capture = true;
     }
 
     sub.type = VKD3D_SUBMISSION_EXECUTE;
@@ -7689,8 +7727,54 @@ static void d3d12_command_queue_signal(struct d3d12_command_queue *command_queue
     /* We should probably trigger DEVICE_REMOVED if we hit any errors in the submission thread. */
 }
 
+static bool d3d12_command_queue_begin_capture(struct d3d12_command_queue *command_queue)
+{
+    const struct vkd3d_vk_device_procs *vk_procs = &command_queue->device->vk_procs;
+    VkDebugUtilsLabelEXT capture_label;
+    bool debug_capture;
+
+    debug_capture = vkd3d_renderdoc_begin_capture(command_queue->device->vkd3d_instance->vk_instance);
+    if (debug_capture && !vkd3d_renderdoc_loaded_api())
+    {
+        if (command_queue->device->vk_info.EXT_debug_utils)
+        {
+            /* Magic fallback which lets us bridge the Wine barrier over to Linux RenderDoc. */
+            capture_label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+            capture_label.pNext = NULL;
+            capture_label.pLabelName = "capture-marker,begin_capture";
+            memset(capture_label.color, 0, sizeof(capture_label.color));
+            VK_CALL(vkQueueInsertDebugUtilsLabelEXT(command_queue->vkd3d_queue->vk_queue, &capture_label));
+        }
+        else
+        {
+            ERR("Attempting to use magic tag fallback for RenderDoc captures but VK_EXT_debug_utils is not supported.\n");
+            debug_capture = false;
+        }
+    }
+
+    return debug_capture;
+}
+
+static void d3d12_command_queue_end_capture(struct d3d12_command_queue *command_queue)
+{
+    const struct vkd3d_vk_device_procs *vk_procs = &command_queue->device->vk_procs;
+    VkDebugUtilsLabelEXT capture_label;
+
+    if (!vkd3d_renderdoc_loaded_api())
+    {
+        /* Magic fallback which lets us bridge the Wine barrier over to Linux RenderDoc. */
+        capture_label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+        capture_label.pNext = NULL;
+        capture_label.pLabelName = "capture-marker,end_capture";
+        memset(capture_label.color, 0, sizeof(capture_label.color));
+        VK_CALL(vkQueueInsertDebugUtilsLabelEXT(command_queue->vkd3d_queue->vk_queue, &capture_label));
+    }
+    else
+        vkd3d_renderdoc_end_capture(command_queue->device->vkd3d_instance->vk_instance);
+}
+
 static void d3d12_command_queue_execute(struct d3d12_command_queue *command_queue,
-        VkCommandBuffer *cmd, UINT count)
+        VkCommandBuffer *cmd, UINT count, bool debug_capture)
 {
     static const VkPipelineStageFlags wait_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     const struct vkd3d_vk_device_procs *vk_procs = &command_queue->device->vk_procs;
@@ -7730,8 +7814,14 @@ static void d3d12_command_queue_execute(struct d3d12_command_queue *command_queu
         return;
     }
 
+    if (debug_capture)
+        debug_capture = d3d12_command_queue_begin_capture(command_queue);
+
     if ((vr = VK_CALL(vkQueueSubmit(vk_queue, 1, &submit_desc, VK_NULL_HANDLE))) < 0)
         ERR("Failed to submit queue(s), vr %d.\n", vr);
+
+    if (debug_capture)
+        d3d12_command_queue_end_capture(command_queue);
 
     vkd3d_queue_release(command_queue->vkd3d_queue);
     command_queue->submit_timeline.last_signaled = signal_value;
@@ -8008,7 +8098,7 @@ static void *d3d12_command_queue_submission_worker_main(void *userdata)
 
         case VKD3D_SUBMISSION_EXECUTE:
             VKD3D_REGION_BEGIN(queue_execute);
-            d3d12_command_queue_execute(queue, submission.execute.cmd, submission.execute.count);
+            d3d12_command_queue_execute(queue, submission.execute.cmd, submission.execute.count, submission.execute.debug_capture);
             vkd3d_free(submission.execute.cmd);
             /* TODO: The correct place to do this would be in a fence handler, but this is good enough for now. */
             for (i = 0; i < submission.execute.count; i++)

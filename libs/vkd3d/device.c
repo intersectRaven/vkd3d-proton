@@ -20,6 +20,7 @@
 
 #include "vkd3d_private.h"
 #include "vkd3d_sonames.h"
+#include "vkd3d_renderdoc.h"
 
 struct vkd3d_struct
 {
@@ -592,6 +593,9 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     instance->vk_debug_callback = VK_NULL_HANDLE;
     if (instance->vk_info.EXT_debug_utils && (instance->config_flags & VKD3D_CONFIG_FLAG_VULKAN_DEBUG))
         vkd3d_init_debug_messenger_callback(instance);
+
+    /* Need to init this sometime after creating the instance so that the layer has loaded. */
+    vkd3d_renderdoc_init();
 
     return S_OK;
 }
