@@ -21,7 +21,9 @@
 
 #include "vkd3d_private.h"
 #include "vkd3d_swapchain_factory.h"
+#ifdef VKD3D_ENABLE_RENDERDOC
 #include "vkd3d_renderdoc.h"
+#endif
 
 static HRESULT d3d12_fence_signal(struct d3d12_fence *fence, uint64_t value);
 static void d3d12_command_queue_add_submission(struct d3d12_command_queue *queue,
@@ -2800,7 +2802,11 @@ static void d3d12_command_list_reset_state(struct d3d12_command_list *list,
     list->is_predicated = false;
     list->render_pass_suspended = false;
     list->need_host_barrier = false;
+#ifdef VKD3D_ENABLE_RENDERDOC
     list->debug_capture = vkd3d_renderdoc_active() && vkd3d_renderdoc_should_capture_shader_hash(0);
+#else
+    list->debug_capture = false;
+#endif
 
     list->current_framebuffer = VK_NULL_HANDLE;
     list->current_pipeline = VK_NULL_HANDLE;
@@ -4738,6 +4744,7 @@ static void STDMETHODCALLTYPE d3d12_command_list_OMSetStencilRef(d3d12_command_l
     dyn_state->dirty_flags |= VKD3D_DYNAMIC_STATE_STENCIL_REFERENCE;
 }
 
+#ifdef VKD3D_ENABLE_RENDERDOC
 static void d3d12_command_list_check_renderdoc_capture(struct d3d12_command_list *list,
         struct d3d12_pipeline_state *state)
 {
@@ -4767,6 +4774,7 @@ static void d3d12_command_list_check_renderdoc_capture(struct d3d12_command_list
         }
     }
 }
+#endif
 
 static void STDMETHODCALLTYPE d3d12_command_list_SetPipelineState(d3d12_command_list_iface *iface,
         ID3D12PipelineState *pipeline_state)
@@ -4797,7 +4805,9 @@ static void STDMETHODCALLTYPE d3d12_command_list_SetPipelineState(d3d12_command_
         }
     }
 
+#ifdef VKD3D_ENABLE_RENDERDOC
     d3d12_command_list_check_renderdoc_capture(list, state);
+#endif
 
     if (list->state == state)
         return;
@@ -7727,6 +7737,7 @@ static void d3d12_command_queue_signal(struct d3d12_command_queue *command_queue
     /* We should probably trigger DEVICE_REMOVED if we hit any errors in the submission thread. */
 }
 
+#ifdef VKD3D_ENABLE_RENDERDOC
 static bool d3d12_command_queue_begin_capture(struct d3d12_command_queue *command_queue)
 {
     const struct vkd3d_vk_device_procs *vk_procs = &command_queue->device->vk_procs;
@@ -7772,6 +7783,7 @@ static void d3d12_command_queue_end_capture(struct d3d12_command_queue *command_
     else
         vkd3d_renderdoc_end_capture(command_queue->device->vkd3d_instance->vk_instance);
 }
+#endif
 
 static void d3d12_command_queue_execute(struct d3d12_command_queue *command_queue,
         VkCommandBuffer *cmd, UINT count, bool debug_capture)
@@ -7814,14 +7826,20 @@ static void d3d12_command_queue_execute(struct d3d12_command_queue *command_queu
         return;
     }
 
+#ifdef VKD3D_ENABLE_RENDERDOC
     if (debug_capture)
         debug_capture = d3d12_command_queue_begin_capture(command_queue);
+#else
+    (void)debug_capture;
+#endif
 
     if ((vr = VK_CALL(vkQueueSubmit(vk_queue, 1, &submit_desc, VK_NULL_HANDLE))) < 0)
         ERR("Failed to submit queue(s), vr %d.\n", vr);
 
+#ifdef VKD3D_ENABLE_RENDERDOC
     if (debug_capture)
         d3d12_command_queue_end_capture(command_queue);
+#endif
 
     vkd3d_queue_release(command_queue->vkd3d_queue);
     command_queue->submit_timeline.last_signaled = signal_value;

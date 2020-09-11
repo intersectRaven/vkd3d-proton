@@ -20,7 +20,10 @@
 
 #include "vkd3d_private.h"
 #include "vkd3d_sonames.h"
+
+#ifdef VKD3D_ENABLE_RENDERDOC
 #include "vkd3d_renderdoc.h"
+#endif
 
 struct vkd3d_struct
 {
@@ -594,8 +597,11 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     if (instance->vk_info.EXT_debug_utils && (instance->config_flags & VKD3D_CONFIG_FLAG_VULKAN_DEBUG))
         vkd3d_init_debug_messenger_callback(instance);
 
+
+#ifdef VKD3D_ENABLE_RENDERDOC
     /* Need to init this sometime after creating the instance so that the layer has loaded. */
     vkd3d_renderdoc_init();
+#endif
 
     return S_OK;
 }

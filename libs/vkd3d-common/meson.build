@@ -1,10 +1,13 @@
 vkd3d_common_src = [
   'debug.c',
-  'renderdoc.c',
   'memory.c',
   'utf8.c',
   'profiling.c'
 ]
+
+if enable_renderdoc
+  vkd3d_common_src += ['renderdoc.c']
+endif
 
 vkd3d_common_lib = static_library('vkd3d_common', vkd3d_common_src,
   include_directories : vkd3d_private_includes,
