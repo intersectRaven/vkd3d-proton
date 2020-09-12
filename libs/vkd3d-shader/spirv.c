@@ -7412,6 +7412,10 @@ static int vkd3d_dxbc_compiler_emit_control_flow_instruction(struct vkd3d_dxbc_c
             assert(cf_info->current_block == VKD3D_BLOCK_SWITCH);
 
             assert(src->swizzle == VKD3D_NO_SWIZZLE && src->reg.type == VKD3DSPR_IMMCONST);
+
+            if (cf_info->inside_block) /* fall-through */
+                break;
+
             value = *src->reg.immconst_uint;
 
             if (!vkd3d_array_reserve((void **)&cf_info->switch_.case_blocks, &cf_info->switch_.case_blocks_size,
@@ -7419,8 +7423,6 @@ static int vkd3d_dxbc_compiler_emit_control_flow_instruction(struct vkd3d_dxbc_c
                 return VKD3D_ERROR_OUT_OF_MEMORY;
 
             label_id = vkd3d_spirv_alloc_id(builder);
-            if (cf_info->inside_block) /* fall-through */
-                vkd3d_spirv_build_op_branch(builder, label_id);
 
             cf_info->switch_.case_blocks[2 * cf_info->switch_.case_block_count + 0] = value;
             cf_info->switch_.case_blocks[2 * cf_info->switch_.case_block_count + 1] = label_id;
