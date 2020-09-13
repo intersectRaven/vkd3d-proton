@@ -1728,7 +1728,7 @@ static HRESULT vkd3d_select_queues(const struct vkd3d_instance *vkd3d_instance,
      * to potentially access descriptors which reference freed memory. This is fine in D3D12, but we need
      * PARTIALLY_BOUND_BIT semantics to make that work well.
      * Just disabling async compute works around the issue as well. */
-    #define VKD3D_FORCE_SINGLE_QUEUE 1
+    #define VKD3D_FORCE_SINGLE_QUEUE 0
 
     if (info->family_index[VKD3D_QUEUE_FAMILY_COMPUTE] == VK_QUEUE_FAMILY_IGNORED || VKD3D_FORCE_SINGLE_QUEUE)
         info->family_index[VKD3D_QUEUE_FAMILY_COMPUTE] = info->family_index[VKD3D_QUEUE_FAMILY_GRAPHICS];
