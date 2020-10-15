@@ -4326,7 +4326,7 @@ static void vkd3d_create_buffer_uav(struct d3d12_desc *descriptor, struct d3d12_
             const struct vkd3d_format *format = vkd3d_get_format(device, DXGI_FORMAT_R32_UINT, false);
 
             if (!vkd3d_create_vk_buffer_view(device, counter_resource->vk_buffer, format,
-                    desc->Buffer.CounterOffsetInBytes + resource->heap_offset, sizeof(uint32_t), &view->vk_counter_view))
+                    desc->Buffer.CounterOffsetInBytes + counter_resource->heap_offset, sizeof(uint32_t), &view->vk_counter_view))
             {
                 static struct d3d12_desc null_desc = {0};
 
